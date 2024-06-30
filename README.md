@@ -1,6 +1,6 @@
 # CW-keyer 自述文档
 
-CW-kyer 是用 blazar MKL25Z128XXX4 开发板 实现的一个半自动电键. 该电键可以接受用户输入的点划, 并将其解码为字符显示在屏幕上. 也可以通过自定义 GPIO 连接继电器, 控制电台发送 Morse 电码.
+CW-kyer 是用 blazar MKL25Z128XXX4 开发板 实现的一个半自动电键. 该电键可以接受用户输入的点划, 并将其解码为字符显示在屏幕上. 也可以通过自定义 GPIO 连接 3.3v 继电器, 引脚 PTE3, 控制电台发送 Morse 电码.
 
 ![](assets/preview.png)
 
