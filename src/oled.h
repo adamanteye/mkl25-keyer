@@ -27,16 +27,16 @@
 /******************************************/
 // 相应标志位赋值与检测功能
 /******************************************/
-#define BIT0 0x01
-#define BIT1 (1 << 1)
-#define BIT2 (1 << 2)
-#define BIT3 (1 << 3)
-#define BIT4 (1 << 4)
-#define BIT5 (1 << 5)
-#define BIT6 (1 << 6)
-#define BIT7 (1 << 7)
-#define BIT8 (1 << 8)
-#define BIT9 (1 << 9)
+#define BIT0  0x01
+#define BIT1  (1 << 1)
+#define BIT2  (1 << 2)
+#define BIT3  (1 << 3)
+#define BIT4  (1 << 4)
+#define BIT5  (1 << 5)
+#define BIT6  (1 << 6)
+#define BIT7  (1 << 7)
+#define BIT8  (1 << 8)
+#define BIT9  (1 << 9)
 #define BIT10 (1 << 10)
 #define BIT11 (1 << 11)
 #define BIT12 (1 << 12)
@@ -60,13 +60,13 @@
 #define BIT30 (1 << 30)
 #define BIT31 (1 << 31)
 
-#define OLED_DC_H (GPIOD_PDOR |= BIT2)
+#define OLED_DC_H    (GPIOD_PDOR |= BIT2)
 #define OLED_RESET_H (GPIOE_PDOR |= BIT31)
 
-#define OLED_DC_L (GPIOD_PDOR &= ~BIT2)
+#define OLED_DC_L    (GPIOD_PDOR &= ~BIT2)
 #define OLED_RESET_L (GPIOE_PDOR &= ~BIT31)
 
-#define DDR_OLED_DC (GPIOD_PDDR |= BIT2)
+#define DDR_OLED_DC    (GPIOD_PDDR |= BIT2)
 #define DDR_OLED_RESET (GPIOE_PDDR |= BIT31)
 
 #include "derivative.h" /* include peripheral declarations */
