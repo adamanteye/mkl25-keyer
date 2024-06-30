@@ -1,7 +1,7 @@
 #ifndef MORSE_H_
 #define MORSE_H_
 
-#define DOT_D  70 /* DOT should last for 70ms */
+unsigned int DOT_D = 70; /* DOT duration, which will be changed during run by ADC read in */
 #define DASH_D (3 * DOT_D)
 
 #define TIMEOUT_D (7 * DOT_D)
@@ -9,6 +9,7 @@
 #define INVALID 0
 #define DOT     1
 #define DASH    2
+#define SPACE   3
 
 #define ltr(x) (((x) << 1) + 1)
 #define rtr(x) (((x) + 1) << 1)

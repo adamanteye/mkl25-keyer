@@ -1,3 +1,4 @@
+#include "adc.h"
 #include "clk.h"
 #include "derivative.h"
 #include "gpio.h"
@@ -6,12 +7,16 @@
 #include "speaker.h"
 
 #define TX_MODE 1
+
 #define DECODE_MODE 0
 
-char is_tx; /* 1 for transmit mode and 0 for decode mode */
+#define TX_SCROLL_BUFFER_SIZE 17
+
+char op_mode; /* 1 for transmit mode and 0 for decode mode */
 
 char codes[256]; /* already decoded morse codes */
-int code_index;  /* current code index */
+
+int code_index; /* current code index */
 
 int prev_input_timer;
 
@@ -34,6 +39,32 @@ unsigned int buf_y; /* 0-15 */
 unsigned int backspace_deshake; /* since dot and dash deshake automatically beacause of duration, only backspace needs to implement deshake logic */
 
 char statistics[] = "00 CHARS IN 000s";
+
+unsigned char tx_scroll_offset; /* used in scrolling the screen in tx mode */
+
+unsigned int blink_cnt; /* controls blink   */
+
+unsigned char tx_buffer_queue[TX_SCROLL_BUFFER_SIZE] = {SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE, SPACE}; /* This queue is always full and only needs one of head or tail */
+
+unsigned int tx_buffer_queue_head; /* Here I use head for handling the queue */
+
+void en_tx_buffer_queue(char ch)
+{
+    tx_buffer_queue[tx_buffer_queue_head] = ch;
+    if (tx_buffer_queue_head != TX_SCROLL_BUFFER_SIZE - 1)
+        tx_buffer_queue_head++;
+
+    else
+        tx_buffer_queue_head = 0;
+}
+
+char get_tx_buffer_queue(unsigned int index)
+{
+    if (index + tx_buffer_queue_head > TX_SCROLL_BUFFER_SIZE - 1)
+        return tx_buffer_queue[index + tx_buffer_queue_head - TX_SCROLL_BUFFER_SIZE];
+    else
+        return tx_buffer_queue[index + tx_buffer_queue_head];
+}
 
 void statistics_init()
 {
@@ -145,6 +176,7 @@ void dot_effect_with_tx()
 {
     dot_effect();
     GPIOE_PDOR |= (1 << 3);
+    en_tx_buffer_queue(DOT);
 }
 
 void dash_effect()
@@ -156,8 +188,25 @@ void dash_effect()
 
 void dash_effect_with_tx()
 {
-    dash_effect();
+    effect_duration = DOT_D;
     GPIOE_PDOR |= (1 << 3);
+    GPIOC_PDOR &= ~(1 << 13);
+    speaker_set_note(SPEAKER_G0);
+    en_tx_buffer_queue(DOT);
+    while (effect_duration != 0)
+        ;
+    effect_duration = DOT_D;
+    GPIOE_PDOR |= (1 << 3);
+    GPIOC_PDOR &= ~(1 << 13);
+    speaker_set_note(SPEAKER_G0);
+    en_tx_buffer_queue(DOT);
+    while (effect_duration != 0)
+        ;
+    effect_duration = DOT_D;
+    GPIOE_PDOR |= (1 << 3);
+    GPIOC_PDOR &= ~(1 << 13);
+    speaker_set_note(SPEAKER_G0);
+    en_tx_buffer_queue(DOT);
 }
 
 void stop_effect()
@@ -171,7 +220,7 @@ void stop_effect()
 void PORTA_IRQHandler()
 {
     /* DOT */
-    if ((GPIOA_PDIR & 0x0002) == 0) /* PTA1 Pressed */
+    if ((GPIOA_PDIR & 0x0002) == 0 && op_mode == DECODE_MODE) /* PTA1 Pressed */
     {
         if (effect_duration == 0)
         {
@@ -184,7 +233,7 @@ void PORTA_IRQHandler()
         PORTA_PCR1 |= 0x01000000;
     }
     /* DASH */
-    if ((GPIOA_PDIR & (1 << 5)) == 0) /* PTA5 Pressed */
+    if ((GPIOA_PDIR & (1 << 5)) == 0 && op_mode == DECODE_MODE) /* PTA5 Pressed */
     {
         if (effect_duration == 0)
         {
@@ -197,7 +246,7 @@ void PORTA_IRQHandler()
         PORTA_PCR5 |= 0x01000000;
     }
     /* BACKSPACE */
-    if ((GPIOA_PDIR & (1 << 12)) == 0)
+    if ((GPIOA_PDIR & (1 << 12)) == 0 && op_mode == DECODE_MODE)
     {
         if (backspace_deshake == 0)
         {
@@ -211,16 +260,31 @@ void PORTA_IRQHandler()
         }
         PORTA_PCR12 |= 0x01000000;
     }
-    /* TX  */
+    /* TX */
     if ((GPIOA_PDIR & (1 << 14)) == 0)
     {
-        if (effect_duration == 0 && code_index >= 0 && is_tx == DECODE_MODE)
-            is_tx = TX_MODE;
+        if (effect_duration == 0 && code_index >= 0 && op_mode == DECODE_MODE)
+            op_mode = TX_MODE;
         PORTA_PCR14 |= 0x01000000;
     }
 }
 
-unsigned int blink_cnt;
+void draw_wave()
+{
+    unsigned int i;
+    char wave;
+    tx_scroll_offset = 8 * (DOT_D - effect_duration) / DOT_D;
+    for (i = 0; i < 17; i++)
+    {
+        wave = get_tx_buffer_queue(i);
+        if (wave == SPACE)
+            wave = ':';
+        else
+            wave = ';';
+        if (i * 8 - tx_scroll_offset >= 0 && i * 8 - tx_scroll_offset <= 15 * 8)
+            oled_w_ch(5, i * 8 - tx_scroll_offset, wave);
+    }
+}
 
 void SysTick_Handler()
 {
@@ -251,21 +315,30 @@ void SysTick_Handler()
         buf_morse_index = 0;
         prev_input_timer = 0;
     }
-    if (blink_cnt == 199 && is_tx == DECODE_MODE)
+    if (blink_cnt == 199 && op_mode == DECODE_MODE)
         oled_w_ch(buf_x, buf_y * 8, buf_len + '0');
-    else if (blink_cnt == 399 && is_tx == DECODE_MODE)
+
+    else if (blink_cnt == 399 && op_mode == DECODE_MODE)
         oled_w_ch(buf_x, buf_y * 8, '|');
     else if (blink_cnt >= 400)
         blink_cnt = 0;
+
+    if (blink_cnt % 30 == 0)
+    {
+        DOT_D = 20 + 70 * adc0_data() / 4095;
+        if (op_mode == TX_MODE)
+            draw_wave();
+    }
     if (total_time > 0)
         total_time++;
+
     i = SYST_CSR;
 }
 
 void device_init()
 {
     effect_duration = 0;
-    is_tx = DECODE_MODE;
+    op_mode = DECODE_MODE;
     code_index = -1;
     prev_input_timer = 0;
     buf_morse_index = 0;
@@ -277,17 +350,19 @@ int main()
 {
     clk_init();
     speaker_init();
+    adc_init();
     oled_init();
     gpio_init();
     device_init();
     draw_init();
+
     int i = 0; /* tmp variable, used in enumerating only */
     for (i = 0; i < 256; i++)
         codes[i] = 0;
     int cur_code;
     while (1) /* 轮询是否为发送模式 */
     {
-        if (is_tx)
+        if (op_mode == TX_MODE)
         {
             buf_morse_index = 0;
             prev_input_timer = 0;
@@ -316,6 +391,7 @@ int main()
                         while (effect_duration != 0)
                             ;
                         effect_duration = DOT_D;
+                        en_tx_buffer_queue(SPACE);
                     }
                 else
                 {
@@ -332,11 +408,23 @@ int main()
                         while (effect_duration != 0)
                             ;
                         effect_duration = DOT_D;
+                        en_tx_buffer_queue(SPACE);
                     }
                 }
                 while (effect_duration != 0)
                     ;
-                effect_duration = DASH_D;
+                effect_duration = DOT_D;
+                en_tx_buffer_queue(SPACE);
+                while (effect_duration != 0)
+                    ;
+                effect_duration = DOT_D;
+                en_tx_buffer_queue(SPACE);
+                while (effect_duration != 0)
+                    ;
+                effect_duration = DOT_D;
+                en_tx_buffer_queue(SPACE);
+                while (effect_duration != 0)
+                    ;
                 post_buf_draw();
             }
             GPIOB_PDOR |= 1 << 19;
