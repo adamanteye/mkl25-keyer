@@ -6,6 +6,18 @@ CW-kyer 是用 blazar MKL25Z128XXX4 开发板 实现的一个半自动电键. �
 
 这里 `src` 打包的是 Freescale Code Warrior 项目中的 `Sources` 文件夹, 编码为 UTF8 格式. 其他工程文件夹中的文件没有打包.
 
+## 使用方法
+
+我用到了以下 4 个开关, 此外, 调整电阻器可以调整点划的时长
+
+```txt
+        + (dot)                 *
+
+  + (backspace) *         + (tx)     *
+
+        + (dash)                *
+```
+
 ## CAHNGELOG
 
 在课堂演示过后, 我又完成了以下功能, 以让项目更加完整:
@@ -13,7 +25,7 @@ CW-kyer 是用 blazar MKL25Z128XXX4 开发板 实现的一个半自动电键. �
 - 从 ADC 读入电阻值, 用来调整 `DOT_D` 的时长, 从而可以控制产生和发送信号的快慢.
 - 在 OLED 屏幕上滚动显示当前的脉冲波形
 
-演示这两个功能的[补充演示视频](./assets/demo.mp4)放在 `assets` 目录下.
+演示以上两个功能的[补充演示视频](./assets/demo.mp4)放在 `assets` 目录下.
 
 ## 程序结构说明
 
@@ -39,7 +51,7 @@ CW-kyer 是用 blazar MKL25Z128XXX4 开发板 实现的一个半自动电键. �
 
 当用户按下发送键后, `op_mode` 被设为 `TX_MODE=1`, 进入发送模式, 发完电码后自动归位 `DOCODE_MODE=0`, 进入解码模式.
 
-值得注意的是, 在发送式下, 屏幕会滚动显示当前发送的字符的脉冲形状.
+值得注意的是, 在发送模式下, 屏幕会滚动显示当前发送的字符的脉冲形状, 从右往左.
 
 在正常的解码模式中, 处理状态更新由 IO 中断和时钟中断控制. 例如用户输入点或者划, 那么有如下事件需要处理:
 
@@ -57,59 +69,78 @@ CW-kyer 是用 blazar MKL25Z128XXX4 开发板 实现的一个半自动电键. �
 ```c
 void PORTA_IRQHandler()
 {
-    if ((GPIOA_PDIR & (1 << 1)) == 0 && op_mode == DECODE_MODE) /* PTA1 Pressed */
+    /* DOT */
+    if ((GPIOA_PDIR & 0x0002) == 0 && op_mode == DECODE_MODE) /* PTA1 Pressed */
     {
         if (effect_duration == 0)
         {
-            register_buf_change();
-            update_morse(DOT);
+            register_cursor_change();
+            update_cursor_result(DOT);
             dot_effect();
-            oled_w_ch(buf_x, buf_y * 8, '.');
-            post_buf_draw();
+            oled_w_ch(cursor_x, cursor_y * 8, '.');
+            post_cursor_draw();
         }
         PORTA_PCR1 |= 0x01000000;
     }
     // ...
 }
 ```
-而有些状态和效果经过规定时间后需要取消或重置, 这可以在时钟中断函数处理:
+而有些状态和效果经过规定时间后需要取消或重置, 这可以在时钟中断函数内处理:
 
 ```c
 void SysTick_Handler()
 {
     unsigned int i;
-    blink_cnt++;
+    cursor_blink_timer++;
     if (effect_duration == 1)
         stop_effect();
     if (effect_duration > 0)
         effect_duration--;
     if (backspace_deshake > 0)
         backspace_deshake--;
+    if (prev_input_timer > 0 && cursor_result != 0)
+        prev_input_timer++;
+    if (prev_input_timer >= TIMEOUT_D) /* timeout occurs, submit cur_decode_result and reset it */
+    {
+        char ch = MORSE[cursor_result];
+        pre_code_draw();
+        if (cursor_shift <= 5 && ch != INVALID)
+        {
+            if (decode_buffer_index < 255)
+                codes[++decode_buffer_index] = ch;
+            else if (decode_buffer_index == 255) /* maxium size excelled */
+                decode_buffer_index = -1;
+            oled_w_ch(code_x, code_y * 8, ch);
+            post_code_draw();
+        }
+        cursor_result = 0;
+        prev_input_timer = 0;
+    }
     // ...
 }
 ```
 
 如此, 事件的逻辑和渲染就被分开了, 某个效果什么时候被取消, 由 `effect_duration` 在轮询中处理, 这样低耦合的编写方式降低了难度.
 
-此外, 由于发送模式用时较长, 发送模式的代码被放在了 main 函数当中, 这是因为发送过程无法在一次中断中完成, 而不同时钟中断间保持状态又比较繁琐, 所以放在主循环中进行.
+此外, 由于发送模式用时较长, 发送模式的代码被放在了 main 函数当中, 这是因为发送过程无法在一次中断内完成, 而不同时钟中断间保持状态又比较繁琐, 所以放在主循环中进行.
 
 滚动显示波形的功能的实现关键是使用队列 `tx_buffer_queue` 存储所有正在绘制的波形数据, 当新波形需要加入时, 就将波形放入队列, 利用先进先出的特性实现波形从右侧飞到左侧. 为了达到粒度为 1 个像素的平滑滚动, 我使用了一个追踪 `effect_duration` 的变量 `tx_scroll_offset`, 通过以下代码计算偏移和绘制波形:
 
 ```c
-void draw_wave()
+void wave_render() /* draw scrolling wave sequence at 5th row */
 {
     unsigned int i;
     char wave;
     tx_scroll_offset = 8 * (DOT_D - effect_duration) / DOT_D;
-    for (i = 0; i < 17; i++)
+    for (i = 0; i < TX_SCROLL_BUFFER_SIZE; i++)
     {
         wave = get_tx_buffer_queue(i);
         if (wave == SPACE)
-            wave = ':';
+            wave = ':'; /* shape of _ */
         else
-            wave = ';';
+            wave = ';'; /* shape of - */
         if (i * 8 - tx_scroll_offset >= 0 && i * 8 - tx_scroll_offset <= 15 * 8)
-            oled_w_ch(5, i * 8 - tx_scroll_offset, wave);
+            oled_w_ch(5, i * 8 - tx_scroll_offset, wave); /* only render those can be displayed within the screen */
     }
 }
 ```
